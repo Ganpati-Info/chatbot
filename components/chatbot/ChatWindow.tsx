@@ -1,14 +1,21 @@
 "use client";
 
 import type { UIMessage } from "ai";
-import type { ChatMode } from "./Chatbot";
 
+import type { ChatMode } from "./Chatbot";
 import { LeadForm } from "./LeadForm";
 import { ChatHeader } from "./ChatHeader";
 import { MessageList } from "./MessageList";
 import { SuggestedActions } from "./SuggestedActions";
 import { ChatInput } from "./ChatInput";
 import { LeadAction } from "./LeadAction";
+
+interface LeadSummary {
+  summary: string;
+  projectType: string;
+  requirements: string[];
+  customerIntent: string;
+}
 
 interface ChatWindowProps {
   messages: UIMessage[];
@@ -20,45 +27,63 @@ interface ChatWindowProps {
   checkingWebsite: boolean;
   websiteChecked: boolean;
   checkingMessage: string;
-
   pendingWebsiteUrl?: string | null;
-  checkedWebsiteUrl?: string | null;
 
+  /*
+   * Lead form
+   */
   showLeadForm: boolean;
   showBuildContact: boolean;
 
-  onClose: () => void;
-  onCloseLeadForm: () => void;
+  checkedWebsiteUrl?: string | null;
 
+  leadSummary: LeadSummary;
+  generatingLeadSummary: boolean;
+  leadSubmitted: boolean;
+
+  /*
+   * Actions
+   */
+  onClose: () => void;
   onSend: (message: string) => void | Promise<void>;
   onAction: (action: ChatMode) => void;
+
   onContact: () => void;
+
+  onCloseLeadForm: () => void;
+  onLeadSuccess: () => void;
 }
 
 export function ChatWindow({
   messages,
   status,
+
   mode,
   actionSelected,
+
   checkingWebsite,
   websiteChecked,
   checkingMessage,
   pendingWebsiteUrl,
-  checkedWebsiteUrl,
+
   showLeadForm,
   showBuildContact,
+
+  checkedWebsiteUrl,
+
+  leadSummary,
+  generatingLeadSummary,
+  leadSubmitted,
+
   onClose,
-  onCloseLeadForm,
   onSend,
   onAction,
+
   onContact,
+
+  onCloseLeadForm,
+  onLeadSuccess,
 }: ChatWindowProps) {
-  const showWebsiteContact =
-    mode === "website-check" && websiteChecked && status === "ready";
-
-  const showContactButton =
-    !showLeadForm && (showWebsiteContact || showBuildContact);
-
   return (
     <div
       className="
@@ -91,29 +116,71 @@ export function ChatWindow({
         status={status}
       />
 
-      {!actionSelected && !checkingWebsite && (
-        <SuggestedActions onSelect={onAction} />
+      {!actionSelected &&
+        !checkingWebsite &&
+        !showLeadForm &&
+        !leadSubmitted && <SuggestedActions onSelect={onAction} />}
+
+      {mode === "website-check" &&
+        websiteChecked &&
+        status === "ready" &&
+        !showLeadForm &&
+        !leadSubmitted && <LeadAction onClick={onContact} />}
+
+      {showBuildContact && !showLeadForm && !leadSubmitted && (
+        <LeadAction onClick={onContact} />
       )}
 
-      {showContactButton && <LeadAction onClick={onContact} />}
+      {generatingLeadSummary && (
+        <div className="border-t border-gray-100 bg-white px-4 py-3">
+          <div className="rounded-xl bg-gray-50 px-4 py-3">
+            <p className="text-[12px] font-medium text-[#172033]">
+              Preparing your project summary...
+            </p>
 
-      {showLeadForm && (
+            <p className="mt-1 text-[11px] leading-4 text-gray-500">
+              Just a moment.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {showLeadForm && !leadSubmitted && (
         <LeadForm
-          websiteUrl={mode === "website-check" ? checkedWebsiteUrl : null}
+          websiteUrl={checkedWebsiteUrl}
           leadType={
             mode === "website-check" ? "website-improvement" : "new-website"
           }
-          onSuccess={onCloseLeadForm}
+          leadSummary={leadSummary}
+          onSuccess={onLeadSuccess}
+          onClose={onCloseLeadForm}
         />
       )}
 
-      <ChatInput
-        onSend={onSend}
-        disabled={
-          checkingWebsite || status === "submitted" || status === "streaming"
-        }
-        mode={mode}
-      />
+      {leadSubmitted && (
+        <div className="border-t border-gray-100 bg-white px-4 py-4">
+          <div className="rounded-xl bg-gray-50 px-4 py-4">
+            <p className="text-[14px] font-medium text-[#172033]">
+              Thanks, we’ve got your details.
+            </p>
+
+            <p className="mt-1 text-[12px] leading-5 text-gray-500">
+              Your details have been sent to the Ganpati team. We’ll get back to
+              you soon.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!showLeadForm && !leadSubmitted && !generatingLeadSummary && (
+        <ChatInput
+          onSend={onSend}
+          disabled={
+            checkingWebsite || status === "submitted" || status === "streaming"
+          }
+          mode={mode}
+        />
+      )}
     </div>
   );
 }

@@ -1,14 +1,28 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { X } from "lucide-react";
 
 interface LeadFormProps {
   websiteUrl?: string | null;
   leadType: "website-improvement" | "new-website" | "general";
+  leadSummary: {
+    summary: string;
+    projectType: string;
+    requirements: string[];
+    customerIntent: string;
+  };
   onSuccess: () => void;
+  onClose: () => void;
 }
 
-export function LeadForm({ websiteUrl, leadType, onSuccess }: LeadFormProps) {
+export function LeadForm({
+  websiteUrl,
+  leadType,
+  leadSummary,
+  onSuccess,
+  onClose,
+}: LeadFormProps) {
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -17,6 +31,7 @@ export function LeadForm({ websiteUrl, leadType, onSuccess }: LeadFormProps) {
   });
 
   const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
 
   function handleChange(field: keyof typeof form, value: string) {
@@ -55,14 +70,18 @@ export function LeadForm({ websiteUrl, leadType, onSuccess }: LeadFormProps) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          ...form,
+          name: form.name.trim(),
+          email: form.email.trim(),
+          phone: form.phone.trim(),
+          message: form.message.trim(),
           websiteUrl: websiteUrl ?? null,
           leadType,
+          leadSummary,
           source: "chatbot",
         }),
       });
 
-      const contentType = response.headers.get("content-type") || "";
+      const contentType = response.headers.get("content-type") ?? "";
 
       if (!contentType.includes("application/json")) {
         throw new Error(
@@ -75,6 +94,8 @@ export function LeadForm({ websiteUrl, leadType, onSuccess }: LeadFormProps) {
       if (!response.ok || !data.success) {
         throw new Error(data.error || "Unable to submit your request.");
       }
+
+      setSubmitted(true);
 
       onSuccess();
     } catch (error) {
@@ -90,16 +111,82 @@ export function LeadForm({ websiteUrl, leadType, onSuccess }: LeadFormProps) {
     }
   }
 
+  if (submitted) {
+    return (
+      <div className="border-t border-gray-100 bg-white px-4 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="rounded-xl bg-gray-50 px-4 py-4">
+            <p className="text-[14px] font-medium text-[#172033]">
+              Thanks, we’ve got your details.
+            </p>
+
+            <p className="mt-1 text-[12px] leading-5 text-gray-500">
+              The Ganpati team will get in touch with you soon.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="
+              flex
+              h-7
+              w-7
+              shrink-0
+              items-center
+              justify-center
+              rounded-full
+              text-gray-400
+              transition
+              hover:bg-gray-100
+              hover:text-gray-600
+            "
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="border-t border-gray-100 bg-white px-4 py-3">
-      <div className="mb-3">
-        <p className="text-[14px] font-medium text-[#172033]">
-          Talk to the Ganpati team
-        </p>
+      {/* Header */}
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[14px] font-medium text-[#172033]">
+            Talk to the Ganpati team
+          </p>
 
-        <p className="mt-1 text-[12px] leading-5 text-gray-500">
-          Leave your details and our team will get in touch with you.
-        </p>
+          <p className="mt-1 text-[12px] leading-5 text-gray-500">
+            Leave your details and our team will get in touch with you.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={submitting}
+          aria-label="Close contact form"
+          className="
+            flex
+            h-7
+            w-7
+            shrink-0
+            items-center
+            justify-center
+            rounded-full
+            text-gray-400
+            transition
+            hover:bg-gray-100
+            hover:text-gray-600
+            disabled:cursor-not-allowed
+            disabled:opacity-50
+          "
+        >
+          <X className="h-4 w-4" />
+        </button>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-2.5">
@@ -189,7 +276,7 @@ export function LeadForm({ websiteUrl, leadType, onSuccess }: LeadFormProps) {
           "
         />
 
-        {error && <p className="text-[11px] text-red-500">{error}</p>}
+        {error && <p className="text-[11px] leading-4 text-red-500">{error}</p>}
 
         <button
           type="submit"
