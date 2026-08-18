@@ -147,9 +147,10 @@
     @apply border-border outline-ring/50;
   }
 
-  body {
-    @apply bg-background text-foreground;
-  }
+  /*
+   * Do not style the host website's body.
+   * The chatbot is embedded into another website.
+   */
 
   html {
     @apply font-sans;
