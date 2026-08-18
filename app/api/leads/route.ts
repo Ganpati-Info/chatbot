@@ -1,5 +1,14 @@
-import nodemailer from "nodemailer";
 import { NextResponse } from "next/server";
+import nodemailer from "nodemailer";
+
+export const runtime = "nodejs";
+
+interface LeadSummary {
+  summary: string;
+  projectType: string;
+  requirements: string[];
+  customerIntent: string;
+}
 
 export async function POST(req: Request) {
   try {
@@ -18,6 +27,29 @@ export async function POST(req: Request) {
 
     const leadType =
       typeof body.leadType === "string" ? body.leadType : "general";
+
+    const leadSummary: LeadSummary = {
+      summary:
+        typeof body.leadSummary?.summary === "string"
+          ? body.leadSummary.summary.trim()
+          : "No summary available.",
+
+      projectType:
+        typeof body.leadSummary?.projectType === "string"
+          ? body.leadSummary.projectType.trim()
+          : "Not specified",
+
+      requirements: Array.isArray(body.leadSummary?.requirements)
+        ? body.leadSummary.requirements.filter(
+            (item: unknown): item is string => typeof item === "string",
+          )
+        : [],
+
+      customerIntent:
+        typeof body.leadSummary?.customerIntent === "string"
+          ? body.leadSummary.customerIntent.trim()
+          : "Customer submitted a lead through the chatbot.",
+    };
 
     if (!name) {
       return NextResponse.json(
@@ -49,121 +81,369 @@ export async function POST(req: Request) {
       );
     }
 
-    const smtpHost = process.env.SMTP_HOST;
-    const smtpPort = Number(process.env.SMTP_PORT || 465);
-    const smtpUser = process.env.SMTP_USER;
-    const smtpPassword = process.env.SMTP_PASSWORD;
-    const leadEmail = process.env.LEAD_EMAIL;
+    const host = process.env.SMTP_HOST;
+    const port = Number(process.env.SMTP_PORT || 465);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASSWORD;
+    const receiver = process.env.LEAD_EMAIL;
 
-    if (!smtpHost || !smtpUser || !smtpPassword || !leadEmail) {
-      console.error("Missing SMTP environment variables");
-
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Email service is not configured.",
-        },
-        { status: 500 },
-      );
-    }
+if (!host || !user || !pass || !receiver) {
+  return NextResponse.json(
+    {
+      success: false,
+      error: "Email service is not configured.",
+    },
+    { status: 500 },
+  );
+}
 
     const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpPort === 465,
+      host,
+      port,
+      secure: port === 465,
       auth: {
-        user: smtpUser,
-        pass: smtpPassword,
+        user,
+        pass,
       },
     });
 
-    await transporter.sendMail({
-      from: `"Ganpati Website" <${smtpUser}>`,
-      to: leadEmail,
-      replyTo: email,
-
-      subject:
-        leadType === "website-improvement"
-          ? `New Website Improvement Lead: ${name}`
-          : leadType === "new-website"
-            ? `New Website Project Lead: ${name}`
-            : `New Chatbot Lead: ${name}`,
-
-      text: `
-New lead received from Ganpati Info Solutions chatbot.
-
-Name: ${name}
-Email: ${email}
-Phone: ${phone}
-
-Lead Type: ${leadType}
-
-Website:
-${websiteUrl || "Not provided"}
-
-Message:
-${message || "No message provided"}
-
-Source:
-Chatbot
-      `.trim(),
-
-      html: `
-        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-          <h2>New Chatbot Lead</h2>
-
-          <p>
-            A new lead has been submitted through the
-            Ganpati Info Solutions website chatbot.
+    const requirementsHtml =
+      leadSummary.requirements.length > 0
+        ? `
+          <ul style="margin: 8px 0 0 0; padding-left: 20px;">
+            ${leadSummary.requirements
+              .map(
+                (requirement) => `
+                  <li style="margin-bottom: 6px;">
+                    ${escapeHtml(requirement)}
+                  </li>
+                `,
+              )
+              .join("")}
+          </ul>
+        `
+        : `
+          <p style="margin: 8px 0 0 0; color: #777;">
+            No specific requirements were mentioned.
           </p>
+        `;
 
-          <hr />
+    const emailHtml = `
+      <div
+        style="
+          font-family: Arial, sans-serif;
+          max-width: 760px;
+          margin: 0 auto;
+          color: #172033;
+        "
+      >
 
-          <p>
-            <strong>Name:</strong> ${escapeHtml(name)}
-          </p>
+        <!-- Header -->
 
-          <p>
-            <strong>Email:</strong> ${escapeHtml(email)}
-          </p>
+        <div
+          style="
+            background: #25499F;
+            color: white;
+            padding: 28px 24px;
+            border-radius: 12px 12px 0 0;
+          "
+        >
+          <h2 style="margin: 0 0 8px 0;">
+            New Chatbot Lead
+          </h2>
 
-          <p>
-            <strong>Phone:</strong> ${escapeHtml(phone)}
-          </p>
-
-          <p>
-            <strong>Lead Type:</strong> ${escapeHtml(leadType)}
-          </p>
-
-          <p>
-            <strong>Website:</strong>
-            ${
-              websiteUrl
-                ? `<a href="${escapeHtml(websiteUrl)}">${escapeHtml(websiteUrl)}</a>`
-                : "Not provided"
-            }
-          </p>
-
-          <p>
-            <strong>Message:</strong>
-          </p>
-
-          <p>
-            ${escapeHtml(message || "No message provided").replace(/\n/g, "<br />")}
-          </p>
-
-          <hr />
-
-          <p>
-            <strong>Source:</strong> Website Chatbot
+          <p style="margin: 0; opacity: 0.9;">
+            Ganpati Info Solutions
           </p>
         </div>
-      `.trim(),
+
+        <div
+          style="
+            border: 1px solid #e5e7eb;
+            border-top: 0;
+            padding: 28px 24px;
+            border-radius: 0 0 12px 12px;
+          "
+        >
+
+          <!-- Lead Summary -->
+
+          <h3 style="margin-top: 0;">
+            Lead Summary
+          </h3>
+
+          <div
+            style="
+              background: #f7f8fa;
+              border-radius: 10px;
+              padding: 16px;
+              line-height: 1.6;
+              margin-bottom: 24px;
+            "
+          >
+            ${escapeHtml(leadSummary.summary)}
+          </div>
+
+          <table
+            style="
+              border-collapse: collapse;
+              width: 100%;
+              margin-bottom: 24px;
+            "
+          >
+
+            <tr>
+              <td
+                style="
+                  padding: 8px 0;
+                  font-weight: bold;
+                  width: 150px;
+                  vertical-align: top;
+                "
+              >
+                Project Type
+              </td>
+
+              <td style="padding: 8px 0;">
+                ${escapeHtml(leadSummary.projectType)}
+              </td>
+            </tr>
+
+            <tr>
+              <td
+                style="
+                  padding: 8px 0;
+                  font-weight: bold;
+                  vertical-align: top;
+                "
+              >
+                Customer Intent
+              </td>
+
+              <td style="padding: 8px 0;">
+                ${escapeHtml(leadSummary.customerIntent)}
+              </td>
+            </tr>
+
+            <tr>
+              <td
+                style="
+                  padding: 8px 0;
+                  font-weight: bold;
+                  vertical-align: top;
+                "
+              >
+                Requirements
+              </td>
+
+              <td style="padding: 8px 0;">
+                ${requirementsHtml}
+              </td>
+            </tr>
+
+          </table>
+
+          <hr
+            style="
+              border: 0;
+              border-top: 1px solid #e5e7eb;
+              margin: 28px 0;
+            "
+          />
+
+          <!-- Contact Details -->
+
+          <h3>
+            Contact Details
+          </h3>
+
+          <table
+            style="
+              border-collapse: collapse;
+              width: 100%;
+            "
+          >
+
+            <tr>
+              <td style="padding: 8px 0; font-weight: bold;">
+                Name
+              </td>
+
+              <td style="padding: 8px 0;">
+                ${escapeHtml(name)}
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 8px 0; font-weight: bold;">
+                Email
+              </td>
+
+              <td style="padding: 8px 0;">
+                <a
+                  href="mailto:${escapeHtml(email)}"
+                  style="color: #25499F;"
+                >
+                  ${escapeHtml(email)}
+                </a>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 8px 0; font-weight: bold;">
+                Phone
+              </td>
+
+              <td style="padding: 8px 0;">
+                ${escapeHtml(phone)}
+              </td>
+            </tr>
+
+            <tr>
+              <td style="padding: 8px 0; font-weight: bold;">
+                Lead Type
+              </td>
+
+              <td style="padding: 8px 0;">
+                ${escapeHtml(leadType)}
+              </td>
+            </tr>
+
+            ${
+              websiteUrl
+                ? `
+                  <tr>
+                    <td style="padding: 8px 0; font-weight: bold;">
+                      Website
+                    </td>
+
+                    <td style="padding: 8px 0;">
+                      <a
+                        href="${escapeHtml(websiteUrl)}"
+                        style="color: #25499F;"
+                      >
+                        ${escapeHtml(websiteUrl)}
+                      </a>
+                    </td>
+                  </tr>
+                `
+                : ""
+            }
+
+            ${
+              message
+                ? `
+                  <tr>
+                    <td
+                      style="
+                        padding: 8px 0;
+                        font-weight: bold;
+                        vertical-align: top;
+                      "
+                    >
+                      Form Message
+                    </td>
+
+                    <td
+                      style="
+                        padding: 8px 0;
+                        white-space: pre-wrap;
+                      "
+                    >
+                      ${escapeHtml(message)}
+                    </td>
+                  </tr>
+                `
+                : ""
+            }
+
+          </table>
+
+          <hr
+            style="
+              border: 0;
+              border-top: 1px solid #e5e7eb;
+              margin: 28px 0;
+            "
+          />
+
+          <p
+            style="
+              font-size: 12px;
+              color: #777;
+              margin-bottom: 0;
+            "
+          >
+            This lead was submitted through the Ganpati Info Solutions
+            chatbot.
+          </p>
+
+        </div>
+      </div>
+    `;
+
+    const emailText = `
+NEW CHATBOT LEAD
+================
+
+LEAD SUMMARY
+------------
+
+Summary:
+${leadSummary.summary}
+
+Project Type:
+${leadSummary.projectType}
+
+Customer Intent:
+${leadSummary.customerIntent}
+
+Requirements:
+${
+  leadSummary.requirements.length
+    ? leadSummary.requirements
+        .map((requirement) => `- ${requirement}`)
+        .join("\n")
+    : "No specific requirements were mentioned."
+}
+
+
+CONTACT DETAILS
+---------------
+
+Name:
+${name}
+
+Email:
+${email}
+
+Phone:
+${phone}
+
+Lead Type:
+${leadType}
+
+Website:
+${websiteUrl || "N/A"}
+
+Form Message:
+${message || "N/A"}
+`;
+
+    await transporter.sendMail({
+      from: "Ganpati Chatbot",
+      to: receiver,
+      replyTo: email,
+
+      subject: `New "${leadType}" lead from ${name}`,
+
+      html: emailHtml,
+
+      text: emailText,
     });
 
     return NextResponse.json({
       success: true,
-      message: "Your request has been sent successfully.",
     });
   } catch (error) {
     console.error("Lead API error:", error);
@@ -171,7 +451,7 @@ Chatbot
     return NextResponse.json(
       {
         success: false,
-        error: "Unable to send your request right now.",
+        error: "Unable to send your request.",
       },
       { status: 500 },
     );

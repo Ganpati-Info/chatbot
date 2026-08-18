@@ -2,7 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ChatButton } from "./ChatButton";
 import { ChatWindow } from "./ChatWindow";
@@ -14,16 +14,85 @@ const GANPATI_HOSTNAMES = [
   "www.ganpatiinfosolutions.com",
 ];
 
+const POSITIVE_RESPONSES = [
+  "yes",
+  "yeah",
+  "yep",
+  "sure",
+  "okay",
+  "ok",
+  "sounds good",
+  "that works",
+  "i'm interested",
+  "im interested",
+  "let's do it",
+  "lets do it",
+  "go ahead",
+  "please do",
+];
+
+const CONTACT_INTENT_PHRASES = [
+  "quick call",
+  "talk with our team",
+  "talk to our team",
+  "speak with our team",
+  "speak to our team",
+  "contact our team",
+  "contact details",
+  "contact form",
+  "get in touch",
+  "connect with our team",
+  "chat with our team",
+  "talk with someone",
+  "talk to someone",
+  "reach out",
+  "someone from our team",
+  "contact ganpati",
+  "talk to ganpati",
+  "team will reach out",
+];
+
+export interface LeadSummary {
+  summary: string;
+  projectType: string;
+  requirements: string[];
+  customerIntent: string;
+}
+
+const EMPTY_LEAD_SUMMARY: LeadSummary = {
+  summary:
+    "Customer submitted a lead through the Ganpati Info Solutions chatbot.",
+  projectType: "Not specified",
+  requirements: [],
+  customerIntent: "Customer submitted a lead through the chatbot.",
+};
+
 export function Chatbot() {
+  /*
+   * ------------------------------------------------------------
+   * CHAT STATE
+   * ------------------------------------------------------------
+   */
+
   const [isOpen, setIsOpen] = useState(false);
 
-  const [mode, setMode] = useState<ChatMode>("general");
-
-  const [actionSelected, setActionSelected] = useState(false);
+  const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
 
   const [showLeadForm, setShowLeadForm] = useState(false);
-
   const [showBuildContact, setShowBuildContact] = useState(false);
+  const [leadSubmitted, setLeadSubmitted] = useState(false);
+
+  const [leadSummary, setLeadSummary] =
+    useState<LeadSummary>(EMPTY_LEAD_SUMMARY);
+
+  const [generatingLeadSummary, setGeneratingLeadSummary] = useState(false);
+
+  const [checkedWebsiteUrl, setCheckedWebsiteUrl] = useState<string | null>(
+    null,
+  );
+
+  const [mode, setMode] = useState<ChatMode>("general");
+  const [actionSelected, setActionSelected] = useState(false);
 
   const [checkingWebsite, setCheckingWebsite] = useState(false);
 
@@ -37,11 +106,40 @@ export function Chatbot() {
     null,
   );
 
-  const [checkedWebsiteUrl, setCheckedWebsiteUrl] = useState<string | null>(
-    null,
-  );
-
   const [checkedUrls, setCheckedUrls] = useState<string[]>([]);
+
+  /*
+   * ------------------------------------------------------------
+   * AUDIO
+   * ------------------------------------------------------------
+   *
+   * Files:
+   *
+   * public/sounds/chatbot-message.mp3
+   * public/sounds/chatbot-notification.wav
+   */
+
+  const notificationAudioRef = useRef<HTMLAudioElement | null>(null);
+  const messageAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  /*
+   * Browser autoplay protection.
+   *
+   * The browser may block audio before the visitor interacts
+   * with the page.
+   */
+  const audioUnlockedRef = useRef(false);
+
+  /*
+   * Prevent the same assistant message from playing twice.
+   */
+  const lastPlayedAssistantMessageIdRef = useRef<string | null>(null);
+
+  /*
+   * ------------------------------------------------------------
+   * CHAT
+   * ------------------------------------------------------------
+   */
 
   const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
@@ -50,13 +148,171 @@ export function Chatbot() {
   });
 
   /*
-   * Extract a website URL from any message.
-   *
-   * Examples:
-   * ganpatiinfosolutions.com
-   * https://ganpatiinfosolutions.com
-   * www.ganpatiinfosolutions.com/about
+   * ------------------------------------------------------------
+   * AUDIO HELPERS
+   * ------------------------------------------------------------
    */
+
+  function initializeAudio() {
+    if (!notificationAudioRef.current) {
+      const notificationAudio = new Audio("/sounds/chatbot-notification.wav");
+
+      notificationAudio.preload = "auto";
+      notificationAudio.volume = 0.2;
+
+      notificationAudioRef.current = notificationAudio;
+    }
+
+    if (!messageAudioRef.current) {
+      const messageAudio = new Audio("/sounds/chatbot-message.mp3");
+
+      messageAudio.preload = "auto";
+      messageAudio.volume = 0.55;
+
+      messageAudioRef.current = messageAudio;
+    }
+  }
+
+  function unlockAudio() {
+    if (audioUnlockedRef.current) {
+      return;
+    }
+
+    initializeAudio();
+
+    audioUnlockedRef.current = true;
+  }
+
+  async function playNotificationSound() {
+    initializeAudio();
+
+    const audio = notificationAudioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    try {
+      audio.currentTime = 0;
+      await audio.play();
+    } catch (error) {
+      /*
+       * Browser blocked autoplay.
+       *
+       * This is expected on many browsers when the page has
+       * not received a user interaction yet.
+       */
+      console.debug("Notification audio blocked by browser:", error);
+    }
+  }
+
+  async function playMessageSound() {
+    initializeAudio();
+
+    const audio = messageAudioRef.current;
+
+    if (!audio) {
+      return;
+    }
+
+    try {
+      audio.currentTime = 0;
+      await audio.play();
+    } catch (error) {
+      console.error("Message audio blocked by browser:", error);
+    }
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * INITIAL PAGE LOAD
+   * ------------------------------------------------------------
+   *
+   * Show the welcome popup and keep it visible.
+   *
+   * We attempt to play the notification immediately.
+   * If the browser blocks autoplay, the sound will play after
+   * the visitor interacts with the page.
+   */
+
+useEffect(() => {
+  initializeAudio();
+
+  const showWelcome = async () => {
+    try {
+      const audio = new Audio("/sounds/chatbot-notification.wav");
+
+      audio.volume = 0.2;
+
+      await audio.play();
+
+      // Sound has started successfully.
+      setShowWelcomeNotification(true);
+    } catch (error) {
+      console.error("Welcome notification sound failed:", error);
+
+      // Still show the notification if the browser blocks autoplay.
+      setShowWelcomeNotification(true);
+    }
+  };
+
+  void showWelcome();
+
+  const unlock = () => {
+    unlockAudio();
+  };
+
+  window.addEventListener("pointerdown", unlock, {
+    once: true,
+    passive: true,
+  });
+
+  window.addEventListener("keydown", unlock, {
+    once: true,
+  });
+
+  return () => {
+    window.removeEventListener("pointerdown", unlock);
+    window.removeEventListener("keydown", unlock);
+  };
+}, []);
+
+  /*
+   * ------------------------------------------------------------
+   * PLAY SOUND WHEN BOT FINISHES RESPONDING
+   * ------------------------------------------------------------
+   */
+
+  useEffect(() => {
+    if (status !== "ready") {
+      return;
+    }
+
+    if (messages.length === 0) {
+      return;
+    }
+
+    const lastMessage = messages[messages.length - 1];
+
+    if (lastMessage.role !== "assistant") {
+      return;
+    }
+
+    if (lastPlayedAssistantMessageIdRef.current === lastMessage.id) {
+      return;
+    }
+
+    lastPlayedAssistantMessageIdRef.current = lastMessage.id;
+
+    void playMessageSound();
+  }, [messages, status]);
+
+  /*
+   * ------------------------------------------------------------
+   * URL HELPERS
+   * ------------------------------------------------------------
+   */
+
   function extractUrl(text: string) {
     const match = text
       .trim()
@@ -87,9 +343,6 @@ export function Chatbot() {
     }
   }
 
-  /*
-   * Check whether the URL belongs to Ganpati Info Solutions.
-   */
   function isGanpatiWebsite(url: string) {
     try {
       const hostname = new URL(url).hostname.toLowerCase();
@@ -101,8 +354,11 @@ export function Chatbot() {
   }
 
   /*
-   * Call the website analysis API.
+   * ------------------------------------------------------------
+   * WEBSITE CHECK
+   * ------------------------------------------------------------
    */
+
   async function checkWebsite(url: string) {
     const response = await fetch("/api/website-check", {
       method: "POST",
@@ -124,153 +380,228 @@ export function Chatbot() {
   }
 
   /*
-   * Get all text from the conversation.
+   * ------------------------------------------------------------
+   * SEND CHAT MESSAGE
+   * ------------------------------------------------------------
    */
-  function getConversationText() {
-    return messages
-      .map((message) =>
-        message.parts
+
+  async function sendChatMessage(
+    message: string,
+    options?: {
+      body?: Record<string, unknown>;
+    },
+  ) {
+    try {
+      await sendMessage(
+        {
+          text: message,
+        },
+        options,
+      );
+    } catch (error) {
+      console.error("Chat request failed:", error);
+    }
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * CONVERSATION
+   * ------------------------------------------------------------
+   */
+
+  function getConversationText(currentMessage?: string) {
+    const previousMessages = messages
+      .map((item) => {
+        const role = item.role === "user" ? "Visitor" : "Ganpati Assistant";
+
+        const text = item.parts
           .filter((part) => part.type === "text")
           .map((part) => part.text)
-          .join(" "),
-      )
-      .join(" ");
+          .join(" ");
+
+        return `${role}: ${text}`;
+      })
+      .join("\n\n");
+
+    const current = currentMessage ? `\n\nVisitor: ${currentMessage}` : "";
+
+    return `${previousMessages}${current}`;
   }
 
   /*
-   * Decide whether the visitor has provided enough
-   * information about a new website/software project.
+   * ------------------------------------------------------------
+   * CONTACT INTENT
+   * ------------------------------------------------------------
    */
-  function hasEnoughBuildInformation(text: string) {
-    const lower = text.toLowerCase();
 
-    const projectKeywords = [
-      "ecommerce",
-      "e-commerce",
-      "website",
-      "web app",
-      "web application",
-      "software",
-      "platform",
-      "react",
-      "next",
-      "shop",
-      "store",
-      "dashboard",
-      "admin panel",
-      "admin dashboard",
-      "login",
-      "signup",
-      "register",
-      "payment",
-      "checkout",
-      "subscription",
-      "saas",
-      "software as a service",
-    ];
+  function isPositiveResponse(message: string) {
+    const normalized = message.trim().toLowerCase();
 
-    const featureKeywords = [
-      "cart",
-      "shopping cart",
-      "user account",
-      "user accounts",
-      "accounts",
-      "login",
-      "payment",
-      "checkout",
-      "product",
-      "products",
-      "dashboard",
-      "authentication",
-      "admin",
-      "admin panel",
-      "admin dashboard",
-      "profile",
-      "profiles",
-      "subscription",
-      "subscriptions",
-    ];
-
-    const hasProject = projectKeywords.some((keyword) =>
-      lower.includes(keyword),
+    return POSITIVE_RESPONSES.some(
+      (response) =>
+        normalized === response ||
+        normalized.startsWith(`${response} `) ||
+        normalized.startsWith(`${response},`) ||
+        normalized.startsWith(`${response}.`) ||
+        normalized.startsWith(`${response}!`),
     );
+  }
 
-    const hasFeature = featureKeywords.some((keyword) =>
-      lower.includes(keyword),
-    );
+  function hasContactIntent(conversationText: string) {
+    const normalized = conversationText.toLowerCase();
 
-    return hasProject && hasFeature;
+    return CONTACT_INTENT_PHRASES.some((phrase) => normalized.includes(phrase));
   }
 
   /*
-   * Handle every message from the visitor.
+   * ------------------------------------------------------------
+   * BUILD CONTEXT
+   * ------------------------------------------------------------
    */
+
+  function hasBuildContext(conversationText: string) {
+    const normalized = conversationText.toLowerCase();
+
+    const hasProjectType =
+      normalized.includes("website") ||
+      normalized.includes("web app") ||
+      normalized.includes("web application") ||
+      normalized.includes("software") ||
+      normalized.includes("ecommerce") ||
+      normalized.includes("e-commerce") ||
+      normalized.includes("online store") ||
+      normalized.includes("application") ||
+      normalized.includes("app") ||
+      normalized.includes("portfolio") ||
+      normalized.includes("platform") ||
+      normalized.includes("system");
+
+    const hasBusinessContext =
+      normalized.includes("business") ||
+      normalized.includes("product") ||
+      normalized.includes("products") ||
+      normalized.includes("clothing") ||
+      normalized.includes("garment") ||
+      normalized.includes("fashion") ||
+      normalized.includes("store") ||
+      normalized.includes("shop") ||
+      normalized.includes("marketplace") ||
+      normalized.includes("brand");
+
+    const hasFeatureContext =
+      normalized.includes("cart") ||
+      normalized.includes("account") ||
+      normalized.includes("payment") ||
+      normalized.includes("checkout") ||
+      normalized.includes("inventory") ||
+      normalized.includes("shipping") ||
+      normalized.includes("login") ||
+      normalized.includes("signup") ||
+      normalized.includes("authentication");
+
+    return hasProjectType && (hasBusinessContext || hasFeatureContext);
+  }
+
+  function shouldShowBuildContact(message: string) {
+    if (showBuildContact || showLeadForm || leadSubmitted) {
+      return false;
+    }
+
+    if (mode !== "build") {
+      return false;
+    }
+
+    const conversationText = getConversationText(message);
+
+    /*
+     * PRIMARY CONDITION
+     *
+     * Assistant suggested contacting the team and the visitor
+     * responded positively.
+     */
+
+    if (isPositiveResponse(message) && hasContactIntent(conversationText)) {
+      return true;
+    }
+
+    /*
+     * SECONDARY CONDITION
+     *
+     * Enough useful project information exists.
+     */
+
+    const userMessageCount =
+      messages.filter((item) => item.role === "user").length + 1;
+
+    if (userMessageCount >= 5 && hasBuildContext(conversationText)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * MAIN SEND HANDLER
+   * ------------------------------------------------------------
+   */
+
   async function handleSend(message: string) {
+    /*
+     * This click/keypress counts as a user interaction.
+     *
+     * Therefore the browser is much more likely to allow
+     * chatbot-message.mp3 to play.
+     */
+
+    unlockAudio();
+
+    /*
+     * Play the user message sound immediately.
+     */
+
+    void playMessageSound();
+
     const websiteUrl = extractUrl(message);
 
     /*
-     * ============================================================
-     * WEBSITE URL DETECTED
-     * ============================================================
-     *
-     * Any URL automatically switches the chatbot to
-     * website-check mode.
+     * ----------------------------------------------------------
+     * WEBSITE CHECK
+     * ----------------------------------------------------------
      */
+
     if (websiteUrl) {
       setMode("website-check");
       setActionSelected(true);
-
-      setShowLeadForm(false);
-      setShowBuildContact(false);
-
       setWebsiteChecked(false);
-      setCheckingWebsite(false);
 
       setPendingWebsiteUrl(websiteUrl);
-      setCheckedWebsiteUrl(null);
+      setCheckedWebsiteUrl(websiteUrl);
 
-      const normalizedUrl = websiteUrl.toLowerCase().replace(/\/$/, "");
+      const normalizedUrl = websiteUrl.toLowerCase();
 
       const alreadyChecked = checkedUrls.some(
-        (url) => url.toLowerCase().replace(/\/$/, "") === normalizedUrl,
+        (url) => url.toLowerCase() === normalizedUrl,
       );
 
-      /*
-       * If this URL was already checked in this conversation,
-       * do not run PageSpeed again.
-       */
       if (alreadyChecked) {
-        setCheckingWebsite(false);
-
-        await sendMessage(
-          {
-            text: message,
+        await sendChatMessage(message, {
+          body: {
+            websiteUrl,
+            websiteAlreadyChecked: true,
+            isGanpatiWebsite: isGanpatiWebsite(websiteUrl),
           },
-          {
-            body: {
-              websiteUrl,
-              websiteAlreadyChecked: true,
-              isGanpatiWebsite: isGanpatiWebsite(websiteUrl),
-            },
-          },
-        );
+        });
 
         setPendingWebsiteUrl(null);
-        setCheckedWebsiteUrl(websiteUrl);
         setWebsiteChecked(true);
 
         return;
       }
 
-      /*
-       * Start website analysis.
-       */
       setCheckingWebsite(true);
       setCheckingMessage("Checking the website");
 
-      /*
-       * Dynamic messages shown while the API is running.
-       */
       const checkingMessages = [
         "Checking the website",
         "Looking at the page experience",
@@ -294,14 +625,10 @@ export function Chatbot() {
 
         const websiteResult = await checkWebsite(websiteUrl);
 
-        /*
-         * Remember this URL so sending the same URL again
-         * does not trigger another PageSpeed request.
-         */
         setCheckedUrls((previous) => {
           if (
             previous.some(
-              (url) => url.toLowerCase().replace(/\/$/, "") === normalizedUrl,
+              (url) => url.toLowerCase() === websiteUrl.toLowerCase(),
             )
           ) {
             return previous;
@@ -310,53 +637,28 @@ export function Chatbot() {
           return [...previous, websiteUrl];
         });
 
-        /*
-         * Store the URL that was successfully checked.
-         */
-        setCheckedWebsiteUrl(websiteResult.website);
-
-        /*
-         * Send the analysis to the AI.
-         */
-        await sendMessage(
-          {
-            text: message,
+        await sendChatMessage(message, {
+          body: {
+            websiteUrl: websiteResult.website,
+            websiteAnalysis: websiteResult.analysis,
+            websiteAnalysisError: false,
+            isGanpatiWebsite: ownWebsite,
+            websiteAlreadyChecked: false,
           },
-          {
-            body: {
-              websiteUrl: websiteResult.website,
-              websiteAnalysis: websiteResult.analysis,
-              websiteAnalysisError: false,
-              isGanpatiWebsite: ownWebsite,
-              websiteAlreadyChecked: false,
-            },
-          },
-        );
+        });
 
         setWebsiteChecked(true);
       } catch (error) {
         console.error("Website check failed:", error);
 
-        /*
-         * Let the AI explain that the check failed.
-         * Do not invent findings.
-         */
-        await sendMessage(
-          {
-            text: message,
+        await sendChatMessage(message, {
+          body: {
+            websiteUrl,
+            websiteAnalysis: null,
+            websiteAnalysisError: true,
+            isGanpatiWebsite: isGanpatiWebsite(websiteUrl),
           },
-          {
-            body: {
-              websiteUrl,
-              websiteAnalysis: null,
-              websiteAnalysisError: true,
-              isGanpatiWebsite: isGanpatiWebsite(websiteUrl),
-              websiteAlreadyChecked: false,
-            },
-          },
-        );
-
-        setWebsiteChecked(false);
+        });
       } finally {
         window.clearInterval(messageInterval);
 
@@ -368,85 +670,149 @@ export function Chatbot() {
     }
 
     /*
-     * ============================================================
+     * ----------------------------------------------------------
      * NORMAL CHAT
-     * ============================================================
+     * ----------------------------------------------------------
      */
 
-    /*
-     * Include the current message because useChat's `messages`
-     * state may not contain the latest message yet.
-     */
-    const conversationText =
-      `${getConversationText()} ${message}`.toLowerCase();
+    await sendChatMessage(message);
 
     /*
-     * Send the visitor's message first.
+     * ----------------------------------------------------------
+     * BUILD CONTACT CTA
+     * ----------------------------------------------------------
      */
-    await sendMessage({
-      text: message,
-    });
 
-    /*
-     * ============================================================
-     * BUILD MODE
-     * ============================================================
-     *
-     * Once enough project information exists,
-     * show the contact CTA.
-     */
-    if (mode === "build" && hasEnoughBuildInformation(conversationText)) {
+    if (shouldShowBuildContact(message)) {
       setShowBuildContact(true);
     }
   }
 
   /*
-   * Handle the three initial actions.
+   * ------------------------------------------------------------
+   * QUICK ACTIONS
+   * ------------------------------------------------------------
    */
+
   function handleAction(action: ChatMode) {
+    unlockAudio();
+
     setMode(action);
     setActionSelected(true);
 
-    /*
-     * Reset lead UI when starting a new flow.
-     */
-    setShowLeadForm(false);
-    setShowBuildContact(false);
-
-    /*
-     * Website check waits for the URL.
-     */
     if (action === "website-check") {
       return;
     }
 
-    /*
-     * Build conversation.
-     */
     if (action === "build") {
       handleSend("I want to build a new website.");
       return;
     }
 
-    /*
-     * General conversation.
-     */
     handleSend("I have a question about Ganpati Info Solutions.");
   }
 
   /*
-   * Open the lead form.
+   * ------------------------------------------------------------
+   * LEAD SUMMARY
+   * ------------------------------------------------------------
    */
-  function handleContact() {
-    setShowLeadForm(true);
+
+  async function handleContact() {
+    if (showLeadForm || leadSubmitted || generatingLeadSummary) {
+      return;
+    }
+
+    unlockAudio();
+
+    setGeneratingLeadSummary(true);
+
+    const conversation = getConversationText();
+
+    try {
+      const response = await fetch("/api/lead-summary", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          conversation,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success || !data.summary) {
+        throw new Error(data.error || "Unable to generate lead summary.");
+      }
+
+      setLeadSummary(data.summary);
+    } catch (error) {
+      console.error("Lead summary generation failed:", error);
+
+      setLeadSummary({
+        ...EMPTY_LEAD_SUMMARY,
+        summary:
+          "Customer contacted Ganpati Info Solutions through the chatbot. AI summary was unavailable.",
+      });
+    } finally {
+      setGeneratingLeadSummary(false);
+      setShowLeadForm(true);
+      setShowBuildContact(false);
+    }
   }
 
   /*
-   * Close the lead form.
+   * ------------------------------------------------------------
+   * LEAD SUCCESS
+   * ------------------------------------------------------------
    */
-  function handleCloseLeadForm() {
+
+  function handleLeadSuccess() {
     setShowLeadForm(false);
+    setShowBuildContact(false);
+    setLeadSubmitted(true);
   }
+
+  /*
+   * ------------------------------------------------------------
+   * OPEN CHAT
+   * ------------------------------------------------------------
+   */
+
+  function handleOpenChat() {
+    unlockAudio();
+
+    /*
+     * Hide the welcome notification only after the user
+     * opens the chatbot.
+     */
+
+    setShowWelcomeNotification(false);
+
+    setIsOpen(true);
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * CLOSE CHAT
+   * ------------------------------------------------------------
+   */
+
+  function handleCloseChat() {
+    setIsOpen(false);
+
+    /*
+     * Keep the notification hidden after the visitor has
+     * already opened the chatbot.
+     */
+  }
+
+  /*
+   * ------------------------------------------------------------
+   * UI
+   * ------------------------------------------------------------
+   */
 
   return (
     <>
@@ -460,17 +826,24 @@ export function Chatbot() {
           websiteChecked={websiteChecked}
           checkingMessage={checkingMessage}
           pendingWebsiteUrl={pendingWebsiteUrl}
-          showBuildContact={showBuildContact}
           showLeadForm={showLeadForm}
+          showBuildContact={showBuildContact}
           checkedWebsiteUrl={checkedWebsiteUrl}
-          onClose={() => setIsOpen(false)}
+          leadSummary={leadSummary}
+          leadSubmitted={leadSubmitted}
+          generatingLeadSummary={generatingLeadSummary}
+          onClose={handleCloseChat}
           onSend={handleSend}
           onAction={handleAction}
           onContact={handleContact}
-          onCloseLeadForm={handleCloseLeadForm}
+          onCloseLeadForm={() => setShowLeadForm(false)}
+          onLeadSuccess={handleLeadSuccess}
         />
       ) : (
-        <ChatButton onClick={() => setIsOpen(true)} />
+        <ChatButton
+          onClick={handleOpenChat}
+          showWelcomeNotification={showWelcomeNotification}
+        />
       )}
     </>
   );
