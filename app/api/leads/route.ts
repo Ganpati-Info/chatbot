@@ -430,17 +430,18 @@ Form Message:
 ${message || "N/A"}
 `;
 
-    await transporter.sendMail({
-      from: "Ganpati Chatbot",
-      to: receiver,
-      replyTo: email,
-
-      subject: `New "${leadType}" lead from ${name}`,
-
-      html: emailHtml,
-
-      text: emailText,
-    });
+await transporter.sendMail({
+  from: `"Ganpati Info Solutions Chatbot" <${user}>`,
+  to: receiver,
+  replyTo: email,
+  envelope: {
+    from: user,
+    to: receiver,
+  },
+  subject: `New "${leadType}" lead from ${name}`,
+  html: emailHtml,
+  text: emailText,
+});
 
     return NextResponse.json({
       success: true,
