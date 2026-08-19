@@ -17,13 +17,19 @@
     iframe.title = "Ganpati Info Solutions Chatbot";
 
     iframe.setAttribute("allow", "autoplay; microphone");
+    iframe.setAttribute("scrolling", "no");
 
     Object.assign(iframe.style, {
       position: "fixed",
       right: "0",
       bottom: "0",
-      width: "430px",
-      height: "750px",
+
+      width: "min(430px, 100vw)",
+      height: "min(750px, 100vh)",
+
+      maxWidth: "100vw",
+      maxHeight: "100vh",
+
       border: "0",
       background: "transparent",
       zIndex: "999999",
@@ -33,13 +39,14 @@
     document.body.appendChild(iframe);
 
     function resize() {
-      if (window.innerWidth <= 640) {
-        iframe.style.width = "100vw";
-        iframe.style.height = "100vh";
-      } else {
-        iframe.style.width = "430px";
-        iframe.style.height = "750px";
-      }
+      var viewportWidth = window.innerWidth;
+      var viewportHeight = window.innerHeight;
+
+      var width = Math.min(430, viewportWidth);
+      var height = Math.min(750, viewportHeight);
+
+      iframe.style.width = width + "px";
+      iframe.style.height = height + "px";
     }
 
     resize();
